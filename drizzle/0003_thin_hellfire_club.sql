@@ -1,0 +1,1 @@
+ALTER TABLE `copies` ADD `label_type` text DEFAULT 'qr' NOT NULL;
