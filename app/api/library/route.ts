@@ -25,7 +25,10 @@ function copyCode() {
 
 function apiError(error: unknown) {
   const message = error instanceof Error ? error.message : "Error inesperado";
-  if (message.includes("UNIQUE constraint failed: readers.document")) {
+  if (
+    message.includes("UNIQUE constraint failed: readers.document") ||
+    message.includes("readers_document")
+  ) {
     return "Ya existe un lector con ese documento.";
   }
   if (message.includes("loans_one_active_per_copy")) {

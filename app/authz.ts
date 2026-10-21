@@ -1,6 +1,9 @@
-import { getD1 } from "../db";
+import { getDb } from "../db";
+import { getCurrentUser } from "../lib/session";
 
-export const OWNER_EMAIL = "boltzmann.euler.maxwell@gmail.com";
+export function initialAdminEmail() {
+  return (process.env.INITIAL_ADMIN_EMAIL ?? "").trim().toLowerCase();
+}
 
 export type Collaborator = {
   id: number;
@@ -9,6 +12,9 @@ export type Collaborator = {
   position: string;
   role: "admin" | "staff";
   status: "pending" | "approved" | "rejected";
+  auth_provider: "password" | "google" | "password+google";
+  google_sub: string | null;
+  avatar_url: string | null;
   requested_at: string;
   approved_at: string | null;
   approved_by: string | null;
@@ -24,33 +30,18 @@ export class AccessError extends Error {
   }
 }
 
-export function identityFromRequest(request: Request) {
-  const email = request.headers
-    .get("oai-authenticated-user-email")
-    ?.trim()
-    .toLowerCase();
-  if (!email) return null;
-
-  const encodedName = request.headers.get("oai-authenticated-user-full-name");
-  const encoding = request.headers.get(
-    "oai-authenticated-user-full-name-encoding",
-  );
-  let name = email;
-  if (encodedName && encoding === "percent-encoded-utf-8") {
-    try {
-      name = decodeURIComponent(encodedName);
-    } catch {
-      name = email;
-    }
-  }
-  return { email, name };
+export async function identityFromRequest() {
+  const user = await getCurrentUser();
+  if (!user) return null;
+  return { email: user.email.trim().toLowerCase(), name: user.name };
 }
 
 export async function collaboratorForRequest(request: Request) {
-  const identity = identityFromRequest(request);
-  if (!identity) return { identity: null, collaborator: null, db: await getD1() };
+  void request;
+  const identity = await identityFromRequest();
+  if (!identity) return { identity: null, collaborator: null, db: await getDb() };
 
-  const db = await getD1();
+  const db = await getDb();
   const collaborator = await db
     .prepare("SELECT * FROM collaborators WHERE email = ?")
     .bind(identity.email)
@@ -66,7 +57,7 @@ export async function requireApprovedCollaborator(request: Request) {
   if (!context.collaborator || context.collaborator.status !== "approved") {
     throw new AccessError(
       403,
-      "Tu registro todavía no ha sido aprobado por un administrador.",
+      "Tu registro todavía no ha sido aprobado por un colaborador principal.",
     );
   }
 

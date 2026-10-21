@@ -1,7 +1,7 @@
 import {
-  OWNER_EMAIL,
   accessErrorResponse,
   collaboratorForRequest,
+  initialAdminEmail,
   requireApprovedCollaborator,
 } from "../../authz";
 
@@ -23,7 +23,8 @@ export async function GET(request: Request) {
       ? (
           await db
             .prepare(`
-              SELECT id, email, name, position, role, status,
+              SELECT id, email, name, position, role, status, auth_provider,
+                google_sub, avatar_url,
                 requested_at, approved_at, approved_by, last_seen_at
               FROM collaborators
               ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'approved' THEN 1 ELSE 2 END,
@@ -38,6 +39,7 @@ export async function GET(request: Request) {
       identity,
       collaborator,
       collaborators,
+      ownerEmail: isAdmin ? initialAdminEmail() : null,
     });
   } catch (error) {
     const accessResponse = accessErrorResponse(error);
@@ -60,7 +62,7 @@ export async function POST(request: Request) {
         return Response.json({ ok: true, collaborator });
       }
 
-      const position = textValue(payload.position) || "Encargado de biblioteca";
+      const position = "Colaborador";
       await db
         .prepare(`
           INSERT INTO collaborators (email, name, position, role, status)
@@ -92,7 +94,7 @@ export async function POST(request: Request) {
     const { collaborator: admin, actor, db } = await requireApprovedCollaborator(request);
     if (admin.role !== "admin") {
       return Response.json(
-        { error: "Solo un administrador puede gestionar colaboradores." },
+        { error: "Solo un colaborador principal puede gestionar accesos." },
         { status: 403 },
       );
     }
@@ -101,15 +103,27 @@ export async function POST(request: Request) {
     if (!email) {
       return Response.json({ error: "Colaborador inválido." }, { status: 400 });
     }
-    if (email === OWNER_EMAIL && action !== "approve_collaborator") {
+    if (
+      (email === initialAdminEmail() || email === admin.email) &&
+      action !== "approve_collaborator"
+    ) {
       return Response.json(
-        { error: "No se puede retirar el acceso del administrador principal." },
+        { error: "No se puede retirar el acceso del colaborador principal protegido." },
         { status: 409 },
       );
     }
 
     if (action === "approve_collaborator") {
       const role = textValue(payload.role) === "admin" ? "admin" : "staff";
+      if (
+        role !== "admin" &&
+        (email === initialAdminEmail() || email === admin.email)
+      ) {
+        return Response.json(
+          { error: "No se puede degradar esta cuenta principal protegida." },
+          { status: 409 },
+        );
+      }
       const result = await db
         .prepare(`
           UPDATE collaborators
@@ -126,7 +140,7 @@ export async function POST(request: Request) {
           INSERT INTO audit_log (actor, action, entity_type, entity_id, detail)
           VALUES (?, 'approve', 'collaborator', ?, ?)
         `)
-        .bind(actor, email, `Acceso aprobado como ${role === "admin" ? "administrador" : "encargado"}`)
+        .bind(actor, email, `Acceso definido como ${role === "admin" ? "colaborador principal" : "colaborador"}`)
         .run();
       return Response.json({ ok: true });
     }
