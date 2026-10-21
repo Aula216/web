@@ -1,13 +1,13 @@
-import { getChatGPTUser } from "./chatgpt-auth";
+import { getCurrentUser } from "../lib/session";
 import LibraryApp from "./library-app";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const user = await getChatGPTUser();
+  const user = await getCurrentUser();
   return (
     <LibraryApp
-      currentUser={user ? { name: user.displayName, email: user.email } : null}
+      currentUser={user ? { name: user.name, email: user.email } : null}
     />
   );
 }

@@ -16,12 +16,14 @@ type CurrentUser = { name: string; email: string };
 type Collaborator = {
   id: number; email: string; name: string; position: string;
   role: "admin" | "staff"; status: "pending" | "approved" | "rejected";
+  auth_provider: "password" | "google" | "password+google";
   requested_at: string; approved_at: string | null; approved_by: string | null;
   last_seen_at: string | null;
 };
 type AccessData = {
   authenticated: boolean; identity: CurrentUser; collaborator: Collaborator | null;
   collaborators: Collaborator[];
+  ownerEmail: string | null;
 };
 type Copy = {
   id: number; code: string; status: "available" | "loaned" | "maintenance" | "lost";
@@ -123,7 +125,7 @@ export default function LibraryApp({ currentUser }: { currentUser: CurrentUser |
     return <AccessScreen mode={access.collaborator.status === "pending" ? "pending" : "rejected"} user={currentUser} onRetry={loadAccess} />;
   }
 
-  return <ApprovedLibrary currentUser={access.collaborator} collaborators={access.collaborators} refreshAccess={loadAccess} />;
+  return <ApprovedLibrary currentUser={access.collaborator} collaborators={access.collaborators} ownerEmail={access.ownerEmail} refreshAccess={loadAccess} />;
 }
 
 function AccessScreen({ mode, message, user, onRetry }: {
@@ -131,34 +133,33 @@ function AccessScreen({ mode, message, user, onRetry }: {
   message?: string; user?: CurrentUser; onRetry?: () => void;
 }) {
   const content = mode === "signed-out"
-    ? { icon: <LockKeyhole />, title: "Acceso para encargados", detail: "Inicia sesión para solicitar o utilizar una cuenta de colaborador." }
+    ? { icon: <LockKeyhole />, title: "Acceso para colaboradores", detail: "Inicia sesión para solicitar o utilizar una cuenta del equipo." }
     : mode === "pending"
-      ? { icon: <Clock3 />, title: "Solicitud pendiente", detail: "Tu registro quedó guardado. Un administrador debe aprobarlo antes de que puedas ver la biblioteca." }
+      ? { icon: <Clock3 />, title: "Solicitud pendiente", detail: "Tu registro quedó guardado. Un colaborador principal debe aprobarlo antes de que puedas ver la biblioteca." }
       : mode === "rejected"
-        ? { icon: <UserX />, title: "Acceso no autorizado", detail: "Tu cuenta no está habilitada. Comunícate con el administrador de la biblioteca." }
+        ? { icon: <UserX />, title: "Acceso no autorizado", detail: "Tu cuenta no está habilitada. Comunícate con un colaborador principal." }
         : mode === "error"
           ? { icon: <AlertTriangle />, title: "No pudimos comprobar el acceso", detail: message || "Inténtalo nuevamente." }
           : { icon: <LoaderCircle className="spin" />, title: "Comprobando acceso", detail: "Estamos verificando tu cuenta de colaborador." };
-  return <main className="access-shell"><section className="access-card"><div className="access-brand"><span><Library /></span><div><strong>Biblioteca</strong><em>216</em></div></div><div className="access-icon">{content.icon}</div><h1>{content.title}</h1><p>{content.detail}</p>{user && <div className="identity-chip"><span className="avatar">{initials(user.name)}</span><div><strong>{user.name}</strong><small>{user.email}</small></div></div>}<div className="access-actions">{mode === "signed-out" && <a className="button primary" href="/signin-with-chatgpt?return_to=/"><LogIn />Iniciar sesión</a>}{(mode === "pending" || mode === "error") && onRetry && <button className="button secondary" onClick={onRetry}><RefreshCw />Comprobar nuevamente</button>}{mode !== "loading" && mode !== "signed-out" && <a className="button tertiary" href="/signout-with-chatgpt?return_to=/"><LogOut />Cerrar sesión</a>}</div><small className="privacy-note"><ShieldCheck />El catálogo y los datos personales solo se muestran a colaboradores aprobados.</small></section></main>;
+  return <main className="access-shell"><section className="access-card"><div className="access-brand"><span><Library /></span><div><strong>Biblioteca</strong><em>216</em></div></div><div className="access-icon">{content.icon}</div><h1>{content.title}</h1><p>{content.detail}</p>{user && <div className="identity-chip"><span className="avatar">{initials(user.name)}</span><div><strong>{user.name}</strong><small>{user.email}</small></div></div>}<div className="access-actions">{mode === "signed-out" && <a className="button primary" href="/login"><LogIn />Iniciar sesión</a>}{(mode === "pending" || mode === "error") && onRetry && <button className="button secondary" onClick={onRetry}><RefreshCw />Comprobar nuevamente</button>}{mode !== "loading" && mode !== "signed-out" && <a className="button tertiary" href="/api/auth/logout"><LogOut />Cerrar sesión</a>}</div><small className="privacy-note"><ShieldCheck />El catálogo y los datos personales solo se muestran a colaboradores aprobados.</small></section></main>;
 }
 
 function RegistrationScreen({ user, onRegistered }: { user: CurrentUser; onRegistered: () => Promise<void> }) {
   const [saving, setSaving] = useState(false); const [error, setError] = useState("");
   async function register(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault(); setSaving(true); setError("");
-    const form = new FormData(event.currentTarget);
     try {
-      const response = await fetch("/api/access", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "register", position: form.get("position") }) });
+      const response = await fetch("/api/access", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "register" }) });
       const payload = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(payload.error || "No se pudo registrar la solicitud.");
       await onRegistered();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "No se pudo registrar la solicitud."); }
     finally { setSaving(false); }
   }
-  return <main className="access-shell"><section className="access-card registration-card"><div className="access-brand"><span><Library /></span><div><strong>Biblioteca</strong><em>216</em></div></div><p className="eyebrow">Registro de colaborador</p><h1>Solicita acceso</h1><p>La cuenta quedará pendiente hasta que un administrador confirme que eres parte del equipo.</p><div className="identity-chip"><span className="avatar">{initials(user.name)}</span><div><strong>{user.name}</strong><small>{user.email}</small></div></div>{error && <div className="alert error-alert"><AlertTriangle />{error}</div>}<form onSubmit={register}><Field label="Cargo o función"><input name="position" defaultValue="Encargado de biblioteca" required /></Field><button className="button primary access-submit" disabled={saving}>{saving ? <LoaderCircle className="spin" /> : <UserPlus />}{saving ? "Registrando…" : "Enviar solicitud"}</button></form><a className="text-button centered" href="/signout-with-chatgpt?return_to=/">Usar otra cuenta</a></section></main>;
+  return <main className="access-shell"><section className="access-card registration-card"><div className="access-brand"><span><Library /></span><div><strong>Biblioteca</strong><em>216</em></div></div><p className="eyebrow">Registro de colaborador</p><h1>Solicita acceso</h1><p>La cuenta quedará pendiente hasta que un colaborador principal confirme que eres parte del equipo.</p><div className="identity-chip"><span className="avatar">{initials(user.name)}</span><div><strong>{user.name}</strong><small>{user.email}</small></div></div>{error && <div className="alert error-alert"><AlertTriangle />{error}</div>}<form onSubmit={register}><button className="button primary access-submit" disabled={saving}>{saving ? <LoaderCircle className="spin" /> : <UserPlus />}{saving ? "Registrando…" : "Enviar solicitud"}</button></form><a className="text-button centered" href="/api/auth/logout">Usar otra cuenta</a></section></main>;
 }
 
-function ApprovedLibrary({ currentUser, collaborators, refreshAccess }: { currentUser: Collaborator; collaborators: Collaborator[]; refreshAccess: () => Promise<void> }) {
+function ApprovedLibrary({ currentUser, collaborators, ownerEmail, refreshAccess }: { currentUser: Collaborator; collaborators: Collaborator[]; ownerEmail: string | null; refreshAccess: () => Promise<void> }) {
   const [data, setData] = useState<LibraryData>(emptyData);
   const [view, setView] = useState<View>("overview");
   const [dialog, setDialog] = useState<Dialog>(null);
@@ -264,8 +265,8 @@ function ApprovedLibrary({ currentUser, collaborators, refreshAccess }: { curren
   const pendingCount = collaborators.filter((item) => item.status === "pending").length;
   const heading = { overview: "Buenos días", catalog: "Catálogo", loans: "Préstamos", readers: "Lectores", inventory: "Inventario físico", team: "Colaboradores" }[view];
 
-  return <div className="app-shell"><aside className="sidebar"><div className="brand"><div className="brand-mark"><Library size={24} /></div><div><strong>Biblioteca</strong><span>216</span></div></div><nav className="main-nav" aria-label="Navegación principal"><NavButton active={view === "overview"} icon={<BookOpen />} label="Resumen" onClick={() => setView("overview")} /><NavButton active={view === "catalog"} icon={<BookCopy />} label="Catálogo" onClick={() => setView("catalog")} count={data.stats.total_copies} /><NavButton active={view === "loans"} icon={<RotateCcw />} label="Préstamos" onClick={() => setView("loans")} count={data.stats.loaned} /><NavButton active={view === "readers"} icon={<Users />} label="Lectores" onClick={() => setView("readers")} count={data.stats.active_readers} /><NavButton active={view === "inventory"} icon={<ClipboardList />} label="Inventario" onClick={() => setView("inventory")} count={data.inventory.session ? data.inventory.session.checked : undefined} />{currentUser.role === "admin" && <NavButton active={view === "team"} icon={<ShieldCheck />} label="Colaboradores" onClick={() => setView("team")} count={pendingCount || undefined} />}</nav><div className="sidebar-bottom"><button className="nav-button" type="button" onClick={() => setDialog("export")}><Settings /><span>Datos y respaldos</span></button><div className="user-card"><span className="avatar">{initials(currentUser.name)}</span><div><strong>{currentUser.name}</strong><span>{currentUser.role === "admin" ? "Administrador" : currentUser.position}</span></div><a href="/signout-with-chatgpt?return_to=/" aria-label="Cerrar sesión"><LogOut /></a></div></div></aside>
-    <main className="workspace"><header className="topbar"><div><p className="eyebrow">Gestión privada · {currentUser.name}</p><h1>{heading}</h1></div><div className="top-actions"><button className="button secondary" type="button" onClick={() => openScanner(view === "inventory" ? "inventory" : "circulation")}><ScanLine />Escanear</button><button className="button primary" type="button" onClick={() => openBook()}><Plus />Nuevo libro</button></div></header>{error && <div className="alert error-alert"><AlertTriangle /><span>{error}</span><button type="button" onClick={() => setError("")}><X /></button></div>}{toast && <div className="toast" role="status" aria-live="polite"><Check />{toast}</div>}{loading ? <div className="loading-state"><LoaderCircle className="spin" /><span>Abriendo Biblioteca 216…</span></div> : view === "overview" ? <Overview data={data} recentLoans={activeLoans.slice(0, 6)} onOpenCatalog={() => setView("catalog")} onOpenLoans={() => setView("loans")} onScan={() => openScanner("circulation")} onReturn={openReturn} /> : view === "catalog" ? <Catalog copies={filteredCopies} search={search} setSearch={setSearch} onLoan={openLoan} onLabel={(copy) => { setSelectedCopy(copy); setLabelFormat(copy.label_type || "qr"); setQrUrl(""); setDialog("label"); }} onAddCopy={(copy) => void postAction({ action: "add_copy", bookId: copy.book_id, labelType: copy.label_type }, "Nuevo ejemplar registrado.")} onDelete={(copy) => { setSelectedCopy(copy); setError(""); setDialog("delete"); }} onCreate={() => openBook()} /> : view === "loans" ? <Loans loans={data.loans} onReturn={openReturn} onScan={() => openScanner("circulation")} /> : view === "readers" ? <Readers readers={data.readers} onCreate={() => { setError(""); setDialog("reader"); }} /> : view === "inventory" ? <Inventory inventory={data.inventory} total={data.copies.length} saving={saving} onStart={() => setDialog("inventory")} onClose={() => void postAction({ action: "close_inventory" }, "Inventario cerrado y guardado.")} onScan={() => openScanner("inventory")} onCheck={(copyId, result) => void postAction({ action: "inventory_check", copyId, result }, "Verificación guardada.")} /> : <CollaboratorsView collaborators={collaborators} saving={saving} onApprove={(email, role) => void postAccess({ action: "approve_collaborator", email, role }, "Colaborador aprobado.")} onReject={(email) => void postAccess({ action: "reject_collaborator", email }, "Solicitud rechazada.")} onRevoke={(email) => void postAccess({ action: "revoke_collaborator", email }, "Acceso retirado.")} />}</main>
+  return <div className="app-shell"><aside className="sidebar"><div className="brand"><div className="brand-mark"><Library size={24} /></div><div><strong>Biblioteca</strong><span>216</span></div></div><nav className="main-nav" aria-label="Navegación principal"><NavButton active={view === "overview"} icon={<BookOpen />} label="Resumen" onClick={() => setView("overview")} /><NavButton active={view === "catalog"} icon={<BookCopy />} label="Catálogo" onClick={() => setView("catalog")} count={data.stats.total_copies} /><NavButton active={view === "loans"} icon={<RotateCcw />} label="Préstamos" onClick={() => setView("loans")} count={data.stats.loaned} /><NavButton active={view === "readers"} icon={<Users />} label="Lectores" onClick={() => setView("readers")} count={data.stats.active_readers} /><NavButton active={view === "inventory"} icon={<ClipboardList />} label="Inventario" onClick={() => setView("inventory")} count={data.inventory.session ? data.inventory.session.checked : undefined} />{currentUser.role === "admin" && <NavButton active={view === "team"} icon={<ShieldCheck />} label="Colaboradores" onClick={() => setView("team")} count={pendingCount || undefined} />}</nav><div className="sidebar-bottom"><button className="nav-button" type="button" onClick={() => setDialog("export")}><Settings /><span>Datos y respaldos</span></button><div className="user-card"><span className="avatar">{initials(currentUser.name)}</span><div><strong>{currentUser.name}</strong><span>{currentUser.role === "admin" ? "Colaborador principal" : "Colaborador"}</span></div><a href="/api/auth/logout" aria-label="Cerrar sesión"><LogOut /></a></div></div></aside>
+    <main className="workspace"><header className="topbar"><div><p className="eyebrow">Gestión privada · {currentUser.name}</p><h1>{heading}</h1></div><div className="top-actions"><button className="button secondary" type="button" onClick={() => openScanner(view === "inventory" ? "inventory" : "circulation")}><ScanLine />Escanear</button><button className="button primary" type="button" onClick={() => openBook()}><Plus />Nuevo libro</button></div></header>{error && <div className="alert error-alert"><AlertTriangle /><span>{error}</span><button type="button" onClick={() => setError("")}><X /></button></div>}{toast && <div className="toast" role="status" aria-live="polite"><Check />{toast}</div>}{loading ? <div className="loading-state"><LoaderCircle className="spin" /><span>Abriendo Biblioteca 216…</span></div> : view === "overview" ? <Overview data={data} recentLoans={activeLoans.slice(0, 6)} onOpenCatalog={() => setView("catalog")} onOpenLoans={() => setView("loans")} onScan={() => openScanner("circulation")} onReturn={openReturn} /> : view === "catalog" ? <Catalog copies={filteredCopies} search={search} setSearch={setSearch} onLoan={openLoan} onLabel={(copy) => { setSelectedCopy(copy); setLabelFormat(copy.label_type || "qr"); setQrUrl(""); setDialog("label"); }} onAddCopy={(copy) => void postAction({ action: "add_copy", bookId: copy.book_id, labelType: copy.label_type }, "Nuevo ejemplar registrado.")} onDelete={(copy) => { setSelectedCopy(copy); setError(""); setDialog("delete"); }} onCreate={() => openBook()} /> : view === "loans" ? <Loans loans={data.loans} onReturn={openReturn} onScan={() => openScanner("circulation")} /> : view === "readers" ? <Readers readers={data.readers} onCreate={() => { setError(""); setDialog("reader"); }} /> : view === "inventory" ? <Inventory inventory={data.inventory} total={data.copies.length} saving={saving} onStart={() => setDialog("inventory")} onClose={() => void postAction({ action: "close_inventory" }, "Inventario cerrado y guardado.")} onScan={() => openScanner("inventory")} onCheck={(copyId, result) => void postAction({ action: "inventory_check", copyId, result }, "Verificación guardada.")} /> : <CollaboratorsView collaborators={collaborators} currentUser={currentUser} ownerEmail={ownerEmail} saving={saving} onApprove={(email, role) => void postAccess({ action: "approve_collaborator", email, role }, role === "admin" ? "Acceso principal asignado." : "Acceso de colaborador asignado.")} onReject={(email) => void postAccess({ action: "reject_collaborator", email }, "Solicitud rechazada.")} onRevoke={(email) => void postAccess({ action: "revoke_collaborator", email }, "Acceso retirado.")} />}</main>
 
     {dialog === "book" && <Modal title="Registrar libro" subtitle="Crea el título y su primer ejemplar" onClose={() => setDialog(null)} wide><form onSubmit={(event) => { event.preventDefault(); void postAction({ action: "create_book", ...bookForm }, "Libro y ejemplar registrados."); }}><div className="isbn-row"><Field label="ISBN" grow><input value={bookForm.isbn} onChange={(e) => setBookForm({ ...bookForm, isbn: e.target.value })} placeholder="978…" autoFocus /></Field><button className="button secondary lookup-button" type="button" onClick={() => void lookupIsbn()} disabled={saving}><Search />Buscar datos</button></div><div className="form-grid"><Field label="Título" full><input required value={bookForm.title} onChange={(e) => setBookForm({ ...bookForm, title: e.target.value })} /></Field><Field label="Autor"><input value={bookForm.author} onChange={(e) => setBookForm({ ...bookForm, author: e.target.value })} /></Field><Field label="Editorial"><input value={bookForm.publisher} onChange={(e) => setBookForm({ ...bookForm, publisher: e.target.value })} /></Field><Field label="Año o fecha"><input value={bookForm.publishYear} onChange={(e) => setBookForm({ ...bookForm, publishYear: e.target.value })} /></Field><Field label="Categoría"><input value={bookForm.category} onChange={(e) => setBookForm({ ...bookForm, category: e.target.value })} /></Field><Field label="Ubicación / estante"><input value={bookForm.shelf} onChange={(e) => setBookForm({ ...bookForm, shelf: e.target.value })} placeholder="Ej. Sala A · Estante 3" /></Field><Field label="Estado físico"><select value={bookForm.condition} onChange={(e) => setBookForm({ ...bookForm, condition: e.target.value })}><option>Nuevo</option><option>Bueno</option><option>Regular</option><option>Requiere reparación</option></select></Field><Field label="Formato de identificación"><select value={bookForm.labelType} onChange={(e) => setBookForm({ ...bookForm, labelType: e.target.value as LabelFormat })}><option value="qr">Código QR</option><option value="barcode">Código de barras</option></select></Field></div><ModalActions saving={saving} onCancel={() => setDialog(null)} confirm="Registrar libro" /></form></Modal>}
     {dialog === "reader" && <Modal title="Nuevo lector" subtitle="Registra los datos de contacto" onClose={() => setDialog(null)}><form onSubmit={(event) => { event.preventDefault(); const form = new FormData(event.currentTarget); void postAction({ action: "create_reader", ...Object.fromEntries(form) }, "Lector registrado."); }}><div className="form-grid"><Field label="Nombre completo" full><input name="name" required autoFocus /></Field><Field label="DNI / documento"><input name="document" required /></Field><Field label="Teléfono"><input name="phone" /></Field><Field label="Correo" full><input name="email" type="email" /></Field><Field label="Dirección" full><input name="address" /></Field></div><ModalActions saving={saving} onCancel={() => setDialog(null)} confirm="Guardar lector" /></form></Modal>}
@@ -302,9 +303,128 @@ function Inventory({ inventory, total, saving, onStart, onClose, onScan, onCheck
 function InventoryResult({ value }: { value: InventoryRow["inventory_result"] }) { if (value === "present") return <span className="pill success">Presente</span>; if (value === "missing") return <span className="pill danger">No encontrado</span>; if (value === "damaged") return <span className="pill ochre">Dañado</span>; return <span className="pill neutral">Sin verificar</span>; }
 function InventoryHistory({ sessions, total }: { sessions: InventorySession[]; total: number }) { return <section className="panel history-panel"><div className="panel-heading compact"><h2>Historial de inventarios</h2><Clock3 /></div><div className="history-list">{sessions.map((session) => <div key={session.id}><span className={`history-dot ${session.status}`}></span><div><strong>{session.name}</strong><small>{shortDate(session.started_at)} · {Number(session.checked || 0)} de {total} verificados</small></div><div><span>{Number(session.missing || 0)} faltantes</span><span>{Number(session.damaged || 0)} dañados</span></div></div>)}</div></section>; }
 
-function CollaboratorsView({ collaborators, saving, onApprove, onReject, onRevoke }: { collaborators: Collaborator[]; saving: boolean; onApprove: (email: string, role: "admin" | "staff") => void; onReject: (email: string) => void; onRevoke: (email: string) => void }) {
-  const pending = collaborators.filter((item) => item.status === "pending"); const active = collaborators.filter((item) => item.status === "approved"); const blocked = collaborators.filter((item) => item.status === "rejected");
-  return <div className="team-layout">{pending.length > 0 && <section className="panel team-panel"><div className="panel-heading"><div><p className="eyebrow">Requieren revisión</p><h2>Solicitudes pendientes</h2></div><span className="pill ochre">{pending.length}</span></div><div className="team-list">{pending.map((person) => <article key={person.id}><span className="avatar large">{initials(person.name)}</span><div><h3>{person.name}</h3><p>{person.email}</p><small>{person.position} · Solicitó {shortDate(person.requested_at)}</small></div><div className="team-actions"><button className="button tertiary" disabled={saving} onClick={() => onReject(person.email)}><UserX />Rechazar</button><button className="button primary" disabled={saving} onClick={() => onApprove(person.email, "staff")}><UserCheck />Aprobar</button></div></article>)}</div></section>}<section className="panel team-panel"><div className="panel-heading"><div><p className="eyebrow">Acceso vigente</p><h2>Colaboradores aprobados</h2></div><span className="pill success">{active.length}</span></div><div className="team-list">{active.map((person) => <article key={person.id}><span className="avatar large">{initials(person.name)}</span><div><h3>{person.name}</h3><p>{person.email}</p><small>{person.role === "admin" ? "Administrador" : person.position} · Último acceso {shortDate(person.last_seen_at)}</small></div><div className="team-actions">{person.role !== "admin" && <button className="button tertiary danger-outline" disabled={saving} onClick={() => onRevoke(person.email)}><UserX />Retirar acceso</button>}<span className={`pill ${person.role === "admin" ? "ochre" : "success"}`}>{person.role === "admin" ? "Administrador" : "Encargado"}</span></div></article>)}</div></section>{blocked.length > 0 && <section className="panel team-panel compact-team"><div className="panel-heading compact"><h2>Accesos bloqueados</h2><UserX /></div><div className="team-list">{blocked.map((person) => <article key={person.id}><span className="avatar">{initials(person.name)}</span><div><h3>{person.name}</h3><p>{person.email}</p></div><button className="button secondary" disabled={saving} onClick={() => onApprove(person.email, "staff")}>Restaurar</button></article>)}</div></section>}</div>;
+function CollaboratorsView({
+  collaborators,
+  currentUser,
+  ownerEmail,
+  saving,
+  onApprove,
+  onReject,
+  onRevoke,
+}: {
+  collaborators: Collaborator[];
+  currentUser: Collaborator;
+  ownerEmail: string | null;
+  saving: boolean;
+  onApprove: (email: string, role: "admin" | "staff") => void;
+  onReject: (email: string) => void;
+  onRevoke: (email: string) => void;
+}) {
+  const pending = collaborators.filter((item) => item.status === "pending");
+  const active = collaborators.filter((item) => item.status === "approved");
+  const blocked = collaborators.filter((item) => item.status === "rejected");
+
+  return (
+    <div className="team-layout">
+      <section className="permissions-guide">
+        <div>
+          <span><Users /></span>
+          <p><strong>Colaborador</strong><small>Gestiona catálogo, préstamos, lectores e inventarios.</small></p>
+        </div>
+        <div>
+          <span><ShieldCheck /></span>
+          <p><strong>Colaborador principal</strong><small>También aprueba cuentas y asigna permisos al equipo.</small></p>
+        </div>
+      </section>
+
+      {pending.length > 0 && (
+        <section className="panel team-panel">
+          <div className="panel-heading">
+            <div><p className="eyebrow">Requieren revisión</p><h2>Solicitudes pendientes</h2></div>
+            <span className="pill ochre">{pending.length}</span>
+          </div>
+          <div className="team-list">
+            {pending.map((person) => (
+              <article key={person.id}>
+                <span className="avatar large">{initials(person.name)}</span>
+                <div>
+                  <h3>{person.name}</h3>
+                  <p>{person.email}</p>
+                  <small>{authMethod(person.auth_provider)} · Solicitó {shortDate(person.requested_at)}</small>
+                </div>
+                <div className="team-actions pending-actions">
+                  <button className="button tertiary danger-outline" disabled={saving} onClick={() => onReject(person.email)}><UserX />Rechazar</button>
+                  <button className="button secondary" disabled={saving} onClick={() => onApprove(person.email, "staff")}><UserCheck />Hacer colaborador</button>
+                  <button className="button primary" disabled={saving} onClick={() => onApprove(person.email, "admin")}><ShieldCheck />Hacer principal</button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="panel team-panel">
+        <div className="panel-heading">
+          <div><p className="eyebrow">Acceso vigente</p><h2>Equipo autorizado</h2></div>
+          <span className="pill success">{active.length}</span>
+        </div>
+        <div className="team-list">
+          {active.map((person) => {
+            const isOwner = Boolean(ownerEmail) && person.email === ownerEmail;
+            const isSelf = person.email === currentUser.email;
+            return (
+              <article key={person.id}>
+                <span className="avatar large">{initials(person.name)}</span>
+                <div>
+                  <h3>{person.name}</h3>
+                  <p>{person.email}</p>
+                  <small>{authMethod(person.auth_provider)} · Último acceso {shortDate(person.last_seen_at)}</small>
+                </div>
+                <div className="team-actions">
+                  {!isOwner && !isSelf && person.role === "staff" && (
+                    <button className="button secondary" disabled={saving} onClick={() => onApprove(person.email, "admin")}><ShieldCheck />Hacer principal</button>
+                  )}
+                  {!isOwner && !isSelf && person.role === "admin" && (
+                    <button className="button secondary" disabled={saving} onClick={() => onApprove(person.email, "staff")}><Users />Cambiar a colaborador</button>
+                  )}
+                  {!isOwner && !isSelf && (
+                    <button className="button tertiary danger-outline" disabled={saving} onClick={() => onRevoke(person.email)}><UserX />Retirar acceso</button>
+                  )}
+                  <span className={`pill ${person.role === "admin" ? "ochre" : "success"}`}>
+                    {isOwner ? "Principal protegido" : isSelf ? "Tu cuenta" : person.role === "admin" ? "Principal" : "Colaborador"}
+                  </span>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+
+      {blocked.length > 0 && (
+        <section className="panel team-panel compact-team">
+          <div className="panel-heading compact"><h2>Accesos bloqueados</h2><UserX /></div>
+          <div className="team-list">
+            {blocked.map((person) => (
+              <article key={person.id}>
+                <span className="avatar">{initials(person.name)}</span>
+                <div><h3>{person.name}</h3><p>{person.email}</p></div>
+                <div className="team-actions">
+                  <button className="button secondary" disabled={saving} onClick={() => onApprove(person.email, "staff")}>Restaurar como colaborador</button>
+                  <button className="button primary" disabled={saving} onClick={() => onApprove(person.email, "admin")}>Restaurar como principal</button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function authMethod(provider: Collaborator["auth_provider"]) {
+  if (provider === "google") return "Google";
+  if (provider === "password+google") return "Correo y Google";
+  return "Correo y contraseña";
 }
 
 function Status({ copy }: { copy: Copy }) { if (copy.status === "available") return <span className="pill success">Disponible</span>; if (copy.status === "loaned") return <div><span className="pill ochre">Prestado</span>{copy.reader_name && <span className="subtext">{copy.reader_name}</span>}</div>; if (copy.status === "maintenance") return <span className="pill neutral">Mantenimiento</span>; return <span className="pill danger">Extraviado</span>; }
